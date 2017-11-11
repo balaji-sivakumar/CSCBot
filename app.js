@@ -1,5 +1,17 @@
 var restify = require('restify');
 var builder = require('botbuilder');
+var http = require('http');
+
+var optionsGet = {
+    host : 'localhost', // here only the domain name
+    // (no http/https !)
+    port : 8080,
+    path : '/rest/model/atg/commerce/order/OrderLookupActor/orderLookupById?orderId=ID',
+    method : 'GET'
+};
+
+console.info('Options prepared:');
+console.log(optionsGet);
 
 // Setup Restify Server
 var server = restify.createServer();
@@ -42,9 +54,9 @@ bot.dialog('Greeting', function (session, args, next) {
 	
 	if(name != null){
 		session.send('Hello  %s!', name.entity);
-		session.send('Hi, I am Bot. How can I help you?');
+		session.send('I am a Bot. How can I help you?');
 	} else {
-		session.send('Hi, I am Bot. How can I help you?');
+		session.send('Hi, I am a Bot. How can I help you?');
 	}
 }).triggerAction({
 	matches: 'Greet'
@@ -55,24 +67,71 @@ bot.dialog('Order Status', function (session, args, next) {
 	console.log(session.userData.userInfo);
 	var verified = performVerification(session, args);
 	if(verified){
-		session.send('We have sucessfuly verified your details');
-		var status = sendOrderStatus(session,args);
-		session.send(status);
+		invokeATGService(session,args, function(jsonRes){
+			var emailInput = session.userData.userInfo.email;
+			var phoneInput = session.userData.userInfo.phoneNumber;
+			var email = "";
+			var phone = "";
+			var status = false;
+			var paymentJSON = jsonRes.paymentResult[0];
+			email = paymentJSON.billingAddress.email;
+			phone = paymentJSON.billingAddress.phoneNumber;
+			console.log(email + ":"+ phone);
+			console.log(emailInput + ":"+ phoneInput);
+			if(emailInput != email &&  phoneInput != phone){
+				console.log('No match!!');
+				status = false;
+			}else{
+				status = true;
+			}
+			console.log('Return value..'+status);
+			if(status){
+				session.send('We have sucessfully verified your details');
+				var status = sendOrderStatus(session,args);
+				session.send(status);
+			}else{
+				session.send('Sorry your details dont match, try again');
+			}
+		});
+				
 	}
 
 }).triggerAction({
 	matches: 'Order Status'
 });
 
+invokeATGService = function (session, args, jsonRes){
+	console.log('BEGIN: Invoke ATG Rest API for Status of Order');
+	var path = optionsGet.path;
+	var status = false;
+	path = path.replace('ID', session.userData.userInfo.orderInfo.orderId);
+	optionsGet.path = path;
+	var reqGet = http.request(optionsGet, function(res) {
+	var orderJSON = "";
+    console.log("statusCode: ", res.statusCode);
+		res.on('data', function(d) {
+			console.info('GET result:\n');
+			orderJSON = JSON.parse(d.toString());
+		});
+		res.on('end', function() {
+			jsonRes(orderJSON);
+		});
+		res.on('error', function(e) {
+			console.error(e);
+		});
+	}).end();
+}
+
 sendOrderStatus = function (session, args){
 	var msg = new builder.Message(session).addAttachment({
 		contentType: "application/vnd.microsoft.card.adaptive",
 		content: {
 			type: "AdaptiveCard",
+			"version": "1.0",
 			body: [
 				{
                         "type": "TextBlock",
-                        "text": "You Order Details",
+                        "text": "Your Order Details",
                         "size": "large",
                         "weight": "bolder"
 					},
@@ -82,7 +141,7 @@ sendOrderStatus = function (session, args){
 					},
 					{
                         "type": "TextBlock",
-                        "text": "Name, Balaji Sivakumar"
+                        "text": "Name: Balaji Sivakumar"
 					},
 					{
                         "type": "TextBlock",
@@ -97,8 +156,9 @@ sendOrderStatus = function (session, args){
                          "text": "Order Status: Shipped, On your way!"
                     },
                     {
-                        "type": "TextBlock",
-                         "text": "Track your order, www.fedex.com?trackingNum=09879"
+						"type": "Action.OpenUrl",
+						"title": "Track your order",
+                        "url": "http://www.fedex.com?trackingNum=09879"
                     }
 			]
 		}
